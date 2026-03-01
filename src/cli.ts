@@ -2,7 +2,7 @@ import { cac } from 'cac';
 import { runCrush } from './index.js';
 import { DEFAULT_OPTIONS } from './config.js';
 import * as p from '@clack/prompts';
-import pc from 'picocolors';
+import chalk from 'chalk';
 import path from 'path';
 
 const cli = cac('pixcrush');
@@ -15,11 +15,12 @@ cli
   .action(async (dir, options) => {
     const targetDir = path.resolve(process.cwd(), dir || '.');
 
-    console.log(pc.bold(pc.magenta('pix') + pc.cyan('crush')));
-    console.log(pc.dim('WebP image migration for React & Next.js'));
-    console.log(pc.dim('─────────────────────────────────────────'));
+    console.log(`\n${chalk.bold(chalk.hex('#106D7C')('pix') + chalk.hex('#8D0D46')('crush'))}`);
+    console.log(chalk.hex('#F1F1F1').dim('WebP image migration for React & Next.js'));
+    console.log(chalk.hex('#F1F1F1').dim('─────────────────────────────────────────'));
+    console.log();
 
-    p.intro(pc.bgMagenta(pc.white(' pixcrush ')) + '  WebP Image Migrator');
+    p.intro(`${chalk.bgHex('#8D0D46').white(' pixcrush ')}  WebP Image Migrator`);
 
     let isDryRun = options.dryRun;
     if (isDryRun === undefined) {
@@ -57,9 +58,9 @@ cli
         quality: options.quality ? parseInt(options.quality, 10) : DEFAULT_OPTIONS.quality,
         deleteOriginals: deleteOriginals,
       });
-      p.outro(pc.green('Finished successfully!'));
+      p.outro(chalk.hex('#8D0D46')('Finished successfully!'));
     } catch (error) {
-      p.cancel(pc.red('An error occurred during execution.'));
+      p.cancel(chalk.hex('#8D0D46')('An error occurred during execution.'));
       console.error(error);
       process.exit(1);
     }
