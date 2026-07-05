@@ -2,6 +2,20 @@
 
 All notable changes to pixcrush will be documented here.
 
+## [1.0.8] - 2026-07-05
+
+### Fixed
+
+- Preserve existing formatting when updating image references in JavaScript, TypeScript, JSX, HTML, and JSON files
+- Preserve attribute spacing, quote style, `srcset` descriptors, indentation, and line endings while replacing image extensions
+
+### Changed
+
+- Replaced whole-file Babel code generation with targeted text edits
+- Removed the unused `@babel/generator` dependency
+
+---
+
 ## [1.0.7] - 2026-03-22
 
 ### Changed

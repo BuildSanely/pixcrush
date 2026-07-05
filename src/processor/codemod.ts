@@ -1,13 +1,29 @@
 import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
-import _generate from '@babel/generator';
 import fs from 'fs/promises';
 import path from 'path';
 import { CodeUpdateResult, ConversionResult } from '../types.js';
 
 const traverse = typeof _traverse === 'function' ? _traverse : (_traverse as any).default;
-const generate = typeof _generate === 'function' ? _generate : (_generate as any).default;
 const IMAGE_EXT_RE = /\.(png|jpe?g)$/i;
+
+interface TextReplacement {
+  start: number;
+  end: number;
+  value: string;
+}
+
+function applyTextReplacements(code: string, replacements: TextReplacement[]): string {
+  return replacements
+    .sort((a, b) => b.start - a.start)
+    .reduce(
+      (updatedCode, replacement) =>
+        updatedCode.slice(0, replacement.start) +
+        replacement.value +
+        updatedCode.slice(replacement.end),
+      code,
+    );
+}
 
 function findMatchedOriginalPath(
   source: string,
@@ -50,9 +66,7 @@ function getUpdatedImageSource(
   const matchedOriginalPath = findMatchedOriginalPath(sourceWithoutQuery, file, conversionMap);
   if (!matchedOriginalPath) return undefined;
 
-  const queryParam = fullOriginalSource.includes('?')
-    ? '?' + fullOriginalSource.split('?')[1]
-    : '';
+  const queryParam = fullOriginalSource.includes('?') ? '?' + fullOriginalSource.split('?')[1] : '';
   return sourceWithoutQuery.replace(IMAGE_EXT_RE, '.webp') + queryParam;
 }
 
@@ -66,38 +80,43 @@ function rewriteHtmlImageReferences(
 
   // Handle srcset-like attributes where each segment can carry a density descriptor.
   updatedCode = updatedCode.replace(
-    /\b(srcset|data-srcset)\s*=\s*(["'])(.*?)\2/gi,
-    (full, attrName, quote, rawValue) => {
+    /\b(?:srcset|data-srcset)\s*=\s*(["'])(.*?)\1/gi,
+    (full, quote, rawValue) => {
       const segments = rawValue.split(',');
       const rewrittenSegments = segments.map((segment: string) => {
-        const trimmed = segment.trim();
-        if (!trimmed) return segment;
+        const tokenMatch = /^(\s*)(\S+)/.exec(segment);
+        if (!tokenMatch) return segment;
 
-        const leading = segment.match(/^\s*/)?.[0] ?? '';
-        const trailing = segment.match(/\s*$/)?.[0] ?? '';
-        const [urlToken, ...rest] = trimmed.split(/\s+/);
-
+        const urlToken = tokenMatch[2];
         const updatedSource = getUpdatedImageSource(urlToken, file, conversionMap);
         if (!updatedSource) return segment;
 
         isModified = true;
-        const descriptor = rest.length ? ` ${rest.join(' ')}` : '';
-        return `${leading}${updatedSource}${descriptor}${trailing}`;
+        const tokenStart = tokenMatch[1].length;
+        return (
+          segment.slice(0, tokenStart) + updatedSource + segment.slice(tokenStart + urlToken.length)
+        );
       });
 
-      return `${attrName}=${quote}${rewrittenSegments.join(',')}${quote}`;
+      const valueStart = full.indexOf(quote) + 1;
+      return (
+        full.slice(0, valueStart) +
+        rewrittenSegments.join(',') +
+        full.slice(valueStart + rawValue.length)
+      );
     },
   );
 
   // Handle plain URL-bearing attributes that can reference images in HTML.
   updatedCode = updatedCode.replace(
-    /\b(src|href|poster|content|data-src)\s*=\s*(["'])(.*?)\2/gi,
-    (full, attrName, quote, rawValue) => {
+    /\b(?:src|href|poster|content|data-src)\s*=\s*(["'])(.*?)\1/gi,
+    (full, quote, rawValue) => {
       const updatedSource = getUpdatedImageSource(rawValue, file, conversionMap);
       if (!updatedSource) return full;
 
       isModified = true;
-      return `${attrName}=${quote}${updatedSource}${quote}`;
+      const valueStart = full.indexOf(quote) + 1;
+      return full.slice(0, valueStart) + updatedSource + full.slice(valueStart + rawValue.length);
     },
   );
 
@@ -117,18 +136,18 @@ function rewriteJsonStringValue(
   let modified = false;
   const segments = value.split(',');
   const rewrittenSegments = segments.map((segment) => {
-    const trimmed = segment.trim();
-    if (!trimmed) return segment;
+    const tokenMatch = /^(\s*)(\S+)/.exec(segment);
+    if (!tokenMatch) return segment;
 
-    const leading = segment.match(/^\s*/)?.[0] ?? '';
-    const trailing = segment.match(/\s*$/)?.[0] ?? '';
-    const [urlToken, ...rest] = trimmed.split(/\s+/);
+    const urlToken = tokenMatch[2];
     const updatedSource = getUpdatedImageSource(urlToken, file, conversionMap);
     if (!updatedSource) return segment;
 
     modified = true;
-    const descriptor = rest.length ? ` ${rest.join(' ')}` : '';
-    return `${leading}${updatedSource}${descriptor}${trailing}`;
+    const tokenStart = tokenMatch[1].length;
+    return (
+      segment.slice(0, tokenStart) + updatedSource + segment.slice(tokenStart + urlToken.length)
+    );
   });
 
   if (!modified) {
@@ -139,39 +158,34 @@ function rewriteJsonStringValue(
 }
 
 function rewriteJsonImageReferences(
-  parsedJson: unknown,
+  code: string,
   file: string,
   conversionMap: Map<string, string>,
-): { value: unknown; isModified: boolean } {
-  if (typeof parsedJson === 'string') {
-    const rewritten = rewriteJsonStringValue(parsedJson, file, conversionMap);
-    return { value: rewritten.value, isModified: rewritten.modified };
-  }
+): { code: string; isModified: boolean } {
+  const replacements: TextReplacement[] = [];
+  const jsonStringPattern = /"(?:\\.|[^"\\])*"/g;
+  let match: RegExpExecArray | null;
 
-  if (Array.isArray(parsedJson)) {
-    let isModified = false;
-    const nextArray = parsedJson.map((item) => {
-      const rewritten = rewriteJsonImageReferences(item, file, conversionMap);
-      if (rewritten.isModified) isModified = true;
-      return rewritten.value;
+  while ((match = jsonStringPattern.exec(code)) !== null) {
+    const rawLiteral = match[0];
+    const afterLiteral = code.slice(match.index + rawLiteral.length);
+    if (/^\s*:/.test(afterLiteral)) continue;
+
+    const value = JSON.parse(rawLiteral) as string;
+    const rewritten = rewriteJsonStringValue(value, file, conversionMap);
+    if (!rewritten.modified) continue;
+
+    replacements.push({
+      start: match.index,
+      end: match.index + rawLiteral.length,
+      value: JSON.stringify(rewritten.value),
     });
-    return { value: nextArray, isModified };
   }
 
-  if (parsedJson && typeof parsedJson === 'object') {
-    let isModified = false;
-    const nextObject: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(parsedJson as Record<string, unknown>)) {
-      const rewritten = rewriteJsonImageReferences(value, file, conversionMap);
-      if (rewritten.isModified) isModified = true;
-      nextObject[key] = rewritten.value;
-    }
-
-    return { value: nextObject, isModified };
-  }
-
-  return { value: parsedJson, isModified: false };
+  return {
+    code: applyTextReplacements(code, replacements),
+    isModified: replacements.length > 0,
+  };
 }
 
 export async function updateCodeReferences(
@@ -211,15 +225,15 @@ export async function updateCodeReferences(
 
     if (fileExt === '.json') {
       try {
-        const parsed = JSON.parse(code) as unknown;
-        const rewritten = rewriteJsonImageReferences(parsed, file, conversionMap);
+        JSON.parse(code);
+        const rewritten = rewriteJsonImageReferences(code, file, conversionMap);
         if (rewritten.isModified) {
           updatedFilesCount++;
           if (!dryRun) {
-            await fs.writeFile(file, `${JSON.stringify(rewritten.value, null, 2)}\n`);
+            await fs.writeFile(file, rewritten.code);
           }
         }
-      } catch (e) {
+      } catch {
         parseFailureFiles.push(path.relative(targetDir, file));
       }
       continue;
@@ -231,12 +245,12 @@ export async function updateCodeReferences(
         sourceType: 'module',
         plugins: ['jsx', 'typescript'],
       });
-    } catch (e) {
+    } catch {
       parseFailureFiles.push(path.relative(targetDir, file));
       continue;
     }
 
-    let isModified = false;
+    const replacements: TextReplacement[] = [];
 
     traverse(ast, {
       StringLiteral(pathNode: any) {
@@ -247,30 +261,25 @@ export async function updateCodeReferences(
         const fullOriginalSource = source;
 
         const newSource = getUpdatedImageSource(fullOriginalSource, file, conversionMap);
-        if (newSource) {
-          pathNode.node.value = newSource;
-          if (pathNode.node.extra) {
-            pathNode.node.extra.rawValue = newSource;
-            const originalQuote = (pathNode.node.extra as any).raw?.[0] || '"';
-            (pathNode.node.extra as any).raw = `${originalQuote}${newSource}${originalQuote}`;
-          }
-          isModified = true;
-        }
+        if (!newSource) return;
+
+        const start = pathNode.node.start;
+        const end = pathNode.node.end;
+        if (typeof start !== 'number' || typeof end !== 'number') return;
+
+        const rawValue = code.slice(start + 1, end - 1);
+        replacements.push({
+          start: start + 1,
+          end: end - 1,
+          value: rawValue.replace(/\.(png|jpe?g)(?=\?|$)/i, '.webp'),
+        });
       },
     });
 
-    if (isModified) {
+    if (replacements.length > 0) {
       updatedFilesCount++;
       if (!dryRun) {
-        const output = generate(
-          ast,
-          {
-            retainLines: true,
-          },
-          code,
-        );
-
-        await fs.writeFile(file, output.code);
+        await fs.writeFile(file, applyTextReplacements(code, replacements));
       }
     }
   }
