@@ -2,6 +2,32 @@
 
 All notable changes to pixcrush will be documented here.
 
+## 1.0.9 - 2026-07-07
+
+### Added
+
+- Added bounded concurrency for image conversion, source analysis, code reference updates, and cleanup
+- Added `--concurrency <number>` to control how many files are processed at once
+- Added `--overwrite` to explicitly replace existing `.webp` files
+- Added atomic WebP writes to avoid partial output files if a write fails
+- Added structured conversion reporting for converted, skipped-larger, skipped-existing, and failed images
+- Added dedicated tests for concurrency, image conversion edge cases, CLI option parsing, summary helpers, filesystem helpers, and the full pipeline
+
+### Changed
+
+- Refactored the CLI, pipeline orchestration, reporting, summary logic, deletion, and filesystem helpers into clearer modules
+- Moved tests into a top-level `test/` directory so `src/` only contains source code
+- Updated TypeScript config to include Node types and the new `test/` directory
+- Updated README documentation for concurrency, overwrite behavior, safe writes, and batch performance
+
+### Fixed
+
+- Fixed CLI `--version` output to match the package version
+- Preserved existing `.webp` files by default unless `--overwrite` is provided
+- Improved per-image failure handling so corrupt or unsupported images do not stop the whole batch
+
+---
+
 ## [1.0.8] - 2026-07-05
 
 ### Fixed
