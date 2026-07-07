@@ -34,13 +34,15 @@ If you don't pass any flags, pixcrush will ask you two quick questions before ru
 
 ## Flags
 
-| Flag                 | Description                                          |
-| -------------------- | ---------------------------------------------------- |
-| `--dry-run`          | Preview what would change without writing any files  |
-| `--delete-originals` | Delete original `.png`/`.jpg` files after conversion |
-| `--quality <number>` | WebP compression quality, 1-100 (default: `80`)      |
-| `--help`             | Show usage info                                      |
-| `--version`          | Show version                                         |
+| Flag                 | Description                                                        |
+| -------------------- | ------------------------------------------------------------------ |
+| `--dry-run`          | Preview what would change without writing any files                |
+| `--delete-originals` | Delete original `.png`/`.jpg` files after conversion               |
+| `--quality <number>` | WebP compression quality, 1-100 (default: `80`)                    |
+| `--concurrency <n>`  | Number of files to process at once (default: safe CPU-based value) |
+| `--overwrite`        | Replace existing `.webp` files instead of skipping them            |
+| `--help`             | Show usage info                                                    |
+| `--version`          | Show version                                                       |
 
 ```bash
 # Preview what would happen with no files modified
@@ -52,8 +54,11 @@ pixcrush . --delete-originals
 # Convert at a higher quality
 pixcrush . --quality 90
 
+# Convert more files at once
+pixcrush . --concurrency 4
+
 # Non-interactive full run
-pixcrush . --delete-originals --quality 85
+pixcrush . --delete-originals --quality 85 --concurrency 4
 ```
 
 ---
@@ -62,6 +67,8 @@ pixcrush . --delete-originals --quality 85
 
 - **Safe AST rewrites** - Uses Babel to update imports and JSX src attributes to .webp without reformatting your files.
 - **Smart compression** - Skips conversion if the resulting WebP would be larger than the original.
+- **Batch performance** - Processes image conversion, source analysis, code updates, and cleanup with safe bounded concurrency.
+- **Safe writes** - Skips existing `.webp` files by default and writes new WebP files atomically to avoid partial output.
 - **Next.js and Turborepo support** - Resolves deeply nested `apps/web/public/` paths so absolute image links like `src="/images/hero.png"` are matched correctly.
 - **Orphan detection** - Reports any image that is never referenced in your source code.
 - **Garbage collection** - With `--delete-originals`, also removes unused orphaned images automatically.
@@ -73,7 +80,7 @@ pixcrush . --delete-originals --quality 85
 
 1. **Scan** - Discovers all `.png`/`.jpg` and `.js`/`.ts`/`.jsx`/`.tsx`/`.html`/`.htm`/`.json` files using `fast-glob`.
 2. **Analyze** - Parses your source code with Babel AST to identify which images are actually used.
-3. **Convert** - Compresses used images to WebP using `sharp` (in-memory, only writes if smaller).
+3. **Convert** - Compresses used images to WebP using `sharp` with bounded concurrency, only writing if the WebP is smaller.
 4. **Rewrite** - Updates import paths and `src` attributes in your source code.
 5. **Report** - Prints a summary of images converted, space saved, files updated, and any warnings.
 

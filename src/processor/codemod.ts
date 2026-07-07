@@ -3,6 +3,7 @@ import _traverse from '@babel/traverse';
 import fs from 'fs/promises';
 import path from 'path';
 import { CodeUpdateResult, ConversionResult } from '../types.js';
+import { mapWithConcurrency } from '../utils/concurrency.js';
 
 const traverse = typeof _traverse === 'function' ? _traverse : (_traverse as any).default;
 const IMAGE_EXT_RE = /\.(png|jpe?g)$/i;
@@ -193,13 +194,14 @@ export async function updateCodeReferences(
   conversions: ConversionResult[],
   targetDir: string,
   dryRun: boolean,
+  concurrency: number,
 ): Promise<CodeUpdateResult> {
   let updatedFilesCount = 0;
   const parseFailureFiles: string[] = [];
 
   const conversionMap = new Map<string, string>();
   for (const c of conversions) {
-    if (!c.skipped && c.newPath) {
+    if (c.status === 'converted' && c.newPath) {
       conversionMap.set(path.normalize(c.originalPath), path.normalize(c.newPath));
     }
   }
@@ -208,7 +210,7 @@ export async function updateCodeReferences(
     return { updatedFilesCount: 0, parseFailureFiles };
   }
 
-  for (const file of codeFiles) {
+  await mapWithConcurrency(codeFiles, concurrency, async (file) => {
     const code = await fs.readFile(file, 'utf8');
     const fileExt = path.extname(file).toLowerCase();
 
@@ -220,7 +222,7 @@ export async function updateCodeReferences(
           await fs.writeFile(file, rewritten.code);
         }
       }
-      continue;
+      return;
     }
 
     if (fileExt === '.json') {
@@ -236,7 +238,7 @@ export async function updateCodeReferences(
       } catch {
         parseFailureFiles.push(path.relative(targetDir, file));
       }
-      continue;
+      return;
     }
 
     let ast;
@@ -247,7 +249,7 @@ export async function updateCodeReferences(
       });
     } catch {
       parseFailureFiles.push(path.relative(targetDir, file));
-      continue;
+      return;
     }
 
     const replacements: TextReplacement[] = [];
@@ -282,7 +284,7 @@ export async function updateCodeReferences(
         await fs.writeFile(file, applyTextReplacements(code, replacements));
       }
     }
-  }
+  });
 
   return { updatedFilesCount, parseFailureFiles };
 }

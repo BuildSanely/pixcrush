@@ -1,9 +1,10 @@
 import { cac } from 'cac';
-import { runCrush } from './index.js';
-import { DEFAULT_OPTIONS } from './config.js';
+import { runCrush } from '../index.js';
+import { DEFAULT_CONCURRENCY } from '../config.js';
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
 import path from 'path';
+import { RawCliOptions, resolveCliOptions } from './options.js';
 
 const cli = cac('pixcrush');
 
@@ -12,7 +13,12 @@ cli
   .option('--dry-run', 'Run without writing any files')
   .option('--quality <number>', 'WebP compression quality (default: 80)')
   .option('--delete-originals', 'Delete original images after successful conversion')
-  .action(async (dir, options) => {
+  .option(
+    '--concurrency <number>',
+    `Number of files to process at once (default: ${DEFAULT_CONCURRENCY})`,
+  )
+  .option('--overwrite', 'Overwrite existing .webp files')
+  .action(async (dir: string | undefined, options: RawCliOptions & Record<string, unknown>) => {
     const targetDir = path.resolve(process.cwd(), dir || '.');
 
     console.log(`\n${chalk.bold(chalk.hex('#106D7C')('pix') + chalk.hex('#8D0D46')('crush'))}`);
@@ -53,11 +59,13 @@ cli
     }
 
     try {
-      await runCrush(targetDir, {
-        dryRun: isDryRun,
-        quality: options.quality ? parseInt(options.quality, 10) : DEFAULT_OPTIONS.quality,
-        deleteOriginals: deleteOriginals,
-      });
+      await runCrush(
+        targetDir,
+        resolveCliOptions(options, {
+          dryRun: Boolean(isDryRun),
+          deleteOriginals: Boolean(deleteOriginals),
+        }),
+      );
       p.outro(chalk.hex('#8D0D46')('Finished successfully!'));
     } catch (error) {
       p.cancel(chalk.hex('#8D0D46')('An error occurred during execution.'));
@@ -67,10 +75,10 @@ cli
   });
 
 cli.help();
-cli.version('1.0.0');
+cli.version('1.0.8');
 
 try {
   cli.parse();
-} catch (err: any) {
+} catch {
   process.exit(1);
 }

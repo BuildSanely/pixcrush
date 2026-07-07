@@ -3,6 +3,7 @@ import _traverse from '@babel/traverse';
 import fs from 'fs/promises';
 import path from 'path';
 import { TrackerResult } from '../types.js';
+import { mapWithConcurrency } from '../utils/concurrency.js';
 
 const traverse = typeof _traverse === 'function' ? _traverse : (_traverse as any).default;
 const IMAGE_EXT_RE = /\.(png|jpe?g)$/i;
@@ -92,20 +93,21 @@ export async function trackAndReconcileImages(
   codeFiles: string[],
   imageFiles: string[],
   targetDir: string,
+  concurrency: number,
 ): Promise<TrackerResult> {
   const usedImagePaths = new Set<string>();
   const absolutePublicUsages = new Set<string>();
   const warnings: string[] = [];
   const parseFailureFiles: string[] = [];
 
-  for (const file of codeFiles) {
+  await mapWithConcurrency(codeFiles, concurrency, async (file) => {
     const code = await fs.readFile(file, 'utf8');
     const fileExt = path.extname(file).toLowerCase();
 
     if (fileExt === '.html' || fileExt === '.htm') {
-      HTML_IMAGE_ATTR_RE.lastIndex = 0;
+      const htmlImageAttrRe = new RegExp(HTML_IMAGE_ATTR_RE);
       let match: RegExpExecArray | null;
-      while ((match = HTML_IMAGE_ATTR_RE.exec(code)) !== null) {
+      while ((match = htmlImageAttrRe.exec(code)) !== null) {
         const rawValue = match[2];
         if (typeof rawValue !== 'string') continue;
 
@@ -113,7 +115,7 @@ export async function trackAndReconcileImages(
           registerUsedImageSource(source, file, targetDir, usedImagePaths, absolutePublicUsages);
         }
       }
-      continue;
+      return;
     }
 
     if (fileExt === '.json') {
@@ -132,7 +134,7 @@ export async function trackAndReconcileImages(
           );
         }
       }
-      continue;
+      return;
     }
 
     let ast;
@@ -146,7 +148,7 @@ export async function trackAndReconcileImages(
       if (process.env.DEBUG_CRUSH) {
         console.warn(`[DEBUG] Failed to parse ${path.relative(targetDir, file)}: ${e.message}`);
       }
-      continue;
+      return;
     }
 
     traverse(ast, {
@@ -168,7 +170,7 @@ export async function trackAndReconcileImages(
         }
       },
     });
-  }
+  });
 
   const usedImages: string[] = [];
   const unusedImages: string[] = [];
